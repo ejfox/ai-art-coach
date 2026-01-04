@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-import { createRequire } from 'module';
+import meow from 'meow';
 import { loadState, generateConvoRespondPromptText, generatePromptText, updateState } from './hourly_coach_run.mjs';
 import openRouterClient from './openrouter.mjs';
-
-const meow = createRequire(import.meta.url)('meow');
 
 // CLI configuration
 const cli = meow(`
@@ -24,7 +22,7 @@ const cli = meow(`
   flags: {
     message: {
       type: 'string',
-      alias: 'm',
+      shortFlag: 'm',
     },
   },
 });
