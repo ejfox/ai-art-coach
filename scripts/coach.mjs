@@ -1,22 +1,26 @@
 #!/usr/bin/env node
-import {createRequire} from 'module';
-import { loadState, generateConvoRespondPromptText, generatePromptText} from './hourly_coach_run.mjs'
+import { createRequire } from 'module';
+import { loadState, generateConvoRespondPromptText, generatePromptText, updateState } from './hourly_coach_run.mjs';
+import openRouterClient from './openrouter.mjs';
+
 const meow = createRequire(import.meta.url)('meow');
 
-// check if the cli has a message argument
-// if it does, we are responding to a user message
-// if it doesn't, we are generating a message to send to the user
+// CLI configuration
 const cli = meow(`
   Usage
-    $ coach --message "Hello, Artie!"
+    $ coach                    Generate a check-in message
+    $ coach --message <text>   Respond to a message from the artist
 
   Options
     --message, -m  The message from the artist
 
   Examples
-    $ coach --message "Hello, Artie!"
+    $ coach
+    $ coach --message "I finished my watercolor study today!"
+    $ coach -m "I'm feeling stuck on my blog post"
 
 `, {
+  importMeta: import.meta,
   flags: {
     message: {
       type: 'string',
@@ -25,49 +29,65 @@ const cli = meow(`
   },
 });
 
-// Load the state
-const state = loadState();
+async function main() {
+  try {
+    console.log('🎨 Coach Artie - AI Art Coach\n');
+    
+    // Load the state
+    const state = loadState();
 
-if (cli.flags.message) {
-  // add the user message to the message history
-  state.messageHistory.push(state.artist + ": " + cli.flags.message);
+    let message;
+    let responseMessage;
 
-  // generate the prompt text
-  const prompt = generateConvoRespondPromptText(state);
+    if (cli.flags.message) {
+      console.log(`💬 ${state.artist}: ${cli.flags.message}\n`);
+      
+      // Add the user message to the message history
+      state.messageHistory.push(`${state.artist}: ${cli.flags.message}`);
 
-  // send the prompt to openai.createCompletion
-  // to generate a message to send to the artist
-  const completion = await openai.createCompletion({
-    model: "text-davinci-003",
-    prompt,
-    temperature: 0.7,
-    max_tokens: 256,
-    top_p: 1,
-    frequency_penalty: 0,
-    presence_penalty: 0,
-  });
+      // Generate the prompt text for responding to the conversation
+      const { systemPrompt, userPrompt } = generateConvoRespondPromptText(state);
 
-  // print the message
-  console.log(completion.data.choices[0].text);
-} else {
-  // generate the prompt text
-  const prompt = generatePromptText(state);
+      // Generate the response
+      responseMessage = await openRouterClient.generateChatCompletion(
+        systemPrompt,
+        userPrompt
+      );
 
-  // send the prompt to openai.createCompletion
-  // to generate a message to send to the artist
-  const completion = await openai.createCompletion({
-    model: "text-davinci-003",
-    prompt,
-    temperature: 0.7,
-    max_tokens: 256,
-    top_p: 1,
-    frequency_penalty: 0,
-    presence_penalty: 0,
-  });
+      message = responseMessage.trim();
+      
+      console.log('🤖 Coach Artie responds:');
+      console.log('─'.repeat(50));
+      console.log(message);
+      console.log('─'.repeat(50) + '\n');
+    } else {
+      // Generate a proactive check-in message
+      const { systemPrompt, userPrompt } = generatePromptText(state);
 
-  // print the message
-  console.log(completion.data.choices[0].text);nod
+      responseMessage = await openRouterClient.generateChatCompletion(
+        systemPrompt,
+        userPrompt
+      );
+
+      message = responseMessage.trim();
+      
+      console.log('📨 Coach Artie says:');
+      console.log('─'.repeat(50));
+      console.log(message);
+      console.log('─'.repeat(50) + '\n');
+    }
+
+    // Update the state with the new message
+    updateState(state, message);
+
+    console.log('✅ Done!\n');
+  } catch (error) {
+    console.error('\n❌ Error:', error.message);
+    process.exit(1);
+  }
 }
+
+main();
 
 
 

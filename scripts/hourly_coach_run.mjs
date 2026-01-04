@@ -1,15 +1,7 @@
 #!/usr/bin/env node
-// const { Configuration, OpenAIApi } = require("openai");
-// use import instead
-import { Configuration, OpenAIApi } from "openai";
-import * as dotenv from "dotenv";
-// get fs
+import openRouterClient from './openrouter.mjs';
+import config from './config.mjs';
 import * as fs from "fs";
-
-const configuration = new Configuration({
-  
-});
-const openai = new OpenAIApi(configuration);
 
 // Coach Artie is an AI robot coach that helps artists achieve their goals
 // It sends AI-generated messages to the artist at regular intervals
@@ -51,12 +43,13 @@ export function loadState() {
 
 export function generatePromptText(state) {
   const currentDate = new Date();
-  const prompt = `
-You are an advanced AI coach for artists. You help artists complete their projects and accomplish their goals through wisdom, persistence, and patience. Your name is Coach Artie and you have the tone of an encouraging teacher combined with Sherlock Holmes.
+  
+  // System prompt defining Coach Artie's personality
+  const systemPrompt = `You are Coach Artie, an advanced AI coach for artists. You help artists complete their projects and accomplish their goals through wisdom, persistence, and patience. You have the tone of an encouraging teacher combined with Sherlock Holmes. You are insightful, supportive, and gently persistent.`;
 
-Your current Artist is named ${state.artist}. ${
-    state.artist
-  } has 3 goals for this week. 
+  // User prompt with context and request
+  const userPrompt = `Your current Artist is named ${state.artist}. ${state.artist} has 3 goals for this week:
+
 Goal 1: ${state.goals[0]}
 Goal 2: ${state.goals[1]}
 Goal 3: ${state.goals[2]}
@@ -65,140 +58,110 @@ ${state.artist}'s motivation: ${state.artistMotivation}
 
 ${state.artist} has requested 1-4 check-in messages a day.
 
-Here are the last few you exchanged with ${state.artist}:
+${state.messageHistory.length > 0 ? `Here are the last few messages you exchanged with ${state.artist}:\n\n${state.messageHistory.slice(-5).join("\n")}\n\n` : ''}It is currently ${currentDate.toLocaleString()}. Write a brief, encouraging text message to ${state.artist} checking in and lightly encouraging them to follow their creative pursuits. Remind them of their goals in a natural, conversational way. Keep it under 200 words.`;
 
----
-
-${state.messageHistory.join("")}
-
----
-
-It is currently ${currentDate}. Write another text to ${
-    state.artist
-  } checking in and lightly encouraging them to follow their creative pursuits and remind them of their goals.
-
-Coach Artie:`;
-
-  return prompt;
+  return { systemPrompt, userPrompt };
 }
 
 export function generateConvoRespondPromptText(state) {
-  // Sometimes the user will respond to the robot
-  // This function generates the prompt text for the robot to respond to the user
+  // System prompt defining Coach Artie's personality
+  const systemPrompt = `You are Coach Artie, an advanced AI coach for artists. You help artists complete their projects and accomplish their goals through wisdom, persistence, and patience. You have the tone of an encouraging teacher combined with Sherlock Holmes. You have infinite wisdom and patience. You are thoughtful, supportive, and genuinely care about your artist's growth.`;
 
-  const prompt = `
-You are an advanced AI coach for artists. You help artists complete their projects and accomplish their goals through wisdom, persistence, and patience. Your name is Coach Artie and you have the tone of an encouraging teacher combined with Sherlock Holmes. You have infinite wisdom and patience. You are a robot. 
+  // User prompt with conversation context
+  const lastMessage = state.messageHistory[state.messageHistory.length - 1] || '';
+  
+  const userPrompt = `Your current Artist is named ${state.artist}. ${state.artist} has 3 goals for this week:
 
-Your current Artist is named ${state.artist}. ${
-    state.artist
-  } has 3 goals for this week. 
 Goal 1: ${state.goals[0]}
 Goal 2: ${state.goals[1]}
 Goal 3: ${state.goals[2]}
 
-${state.artist}'s motivation:${state.artistMotivation}
+${state.artist}'s motivation: ${state.artistMotivation}
 
 ${state.artist} has requested 1-4 check-in messages a day.
 
-Here are the last few you exchanged with ${state.artist}:
+${state.messageHistory.length > 0 ? `Here are the recent messages you've exchanged with ${state.artist}:\n\n${state.messageHistory.slice(-5).join("\n")}\n\n` : ''}${state.artist} has just sent you this message: "${lastMessage}"
 
----
+Please respond to ${state.artist}'s message in a supportive, encouraging way. Address what they've shared, and if appropriate, gently guide them back to their goals. Keep it conversational and under 200 words.`;
 
-${state.messageHistory.join("\n")}
-
----
-
-${state.artist} has responded to your last message...
-
-${state.artist}: ${state.messageHistory[state.messageHistory.length - 1]}
-Coach Artie:`;
-
-  return prompt;
+  return { systemPrompt, userPrompt };
 }
 
 export async function generateMessage(state) {
   // Generate the prompt text
-  const prompt = generatePromptText(state);
+  const { systemPrompt, userPrompt } = generatePromptText(state);
 
-  // generate the temperature
-  // the temperature changes throughout the day
-  // the temperature is lower in the morning and higher at night
-  // in the morning it is 0.5 and at midnight it is 0.99
+  // Generate the temperature based on time of day
+  // Temperature is lower in the morning (more focused) and higher at night (more creative)
   const currentDate = new Date();
   const currentHour = currentDate.getHours();
   const temperature = 0.5 + (currentHour / 24) * 0.49;
 
-  // send the prompt to openai.createCompletion
-  // to generate a message to send to the artist
-  const completion = await openai.createCompletion({
-    model: "text-davinci-003",
-    prompt,
-    temperature: 0.7,
-    max_tokens: 256,
-    top_p: 1,
-    frequency_penalty: 0,
-    presence_penalty: 0,
-  });
+  try {
+    // Use OpenRouter to generate the message
+    const message = await openRouterClient.generateChatCompletion(
+      systemPrompt,
+      userPrompt,
+      { temperature }
+    );
 
-  // return the message
-  return completion.data.choices[0].text;
+    return message.trim();
+  } catch (error) {
+    console.error('❌ Failed to generate message:', error.message);
+    throw error;
+  }
 }
 
 export function updateState(state, message) {
   // Update the state
   // Add the message to the message history
-  state.messageHistory.push("Coache Artie: " + message);
+  state.messageHistory.push(`Coach Artie: ${message}`);
+
+  // Keep only the last 10 messages to prevent the history from growing too large
+  if (state.messageHistory.length > 10) {
+    state.messageHistory = state.messageHistory.slice(-10);
+  }
 
   // Update the last run time
-  state.lastRun = new Date();
+  state.lastRun = new Date().toISOString();
 
   // Save the state
-  fs.writeFileSync("state/state.json", JSON.stringify(state, null, 2));
-
-  console.log("💾 Saved state");
+  try {
+    fs.writeFileSync("state/state.json", JSON.stringify(state, null, 2));
+    console.log("💾 Saved state");
+  } catch (error) {
+    console.error('❌ Failed to save state:', error.message);
+    throw error;
+  }
 }
 
 export async function run() {
-  // Load the state
-  const state = loadState();
+  try {
+    console.log('🎨 Starting AI Art Coach...\n');
+    
+    // Load the state
+    const state = loadState();
 
-  // check if the cli has a message argument
-  // if it does, we are responding to a user message
-  // if it doesn't, we are generating a message to send to the user
-  if (cli.flags.message) {
-    // add the user message to the message history
-    state.messageHistory.push(state.artist + ": " + cli.flags.message);
-
-    // generate the prompt text
-    const prompt = generateConvoRespondPromptText(state);
-
-    // send the prompt to openai.createCompletion
-    // to generate a message to send to the artist
-    const completion = await openai.createCompletion({
-      model: "text-davinci-003",
-      prompt,
-      temperature: 0.7,
-      max_tokens: 256,
-      top_p: 1,
-      frequency_penalty: 0,
-      presence_penalty: 0,
-    });
-
-    // print the message
-    console.log(completion.data.choices[0].text);
-  } else {
-    // generate a message to send to the user
+    // Generate a message
     const message = await generateMessage(state);
 
-    // print the message
+    // Print the message
+    console.log('\n📨 Coach Artie says:');
+    console.log('─'.repeat(50));
     console.log(message);
+    console.log('─'.repeat(50) + '\n');
+
+    // Update the state
+    updateState(state, message);
+
+    console.log('✅ Run completed successfully\n');
+  } catch (error) {
+    console.error('\n❌ Run failed:', error.message);
+    process.exit(1);
   }
-
-  // update the state
-  updateState(state, message);
-
-  // Exit the script
-  process.exit();
 }
 
-run();
+// Only run if this is the main module
+if (import.meta.url === `file://${process.argv[1]}`) {
+  run();
+}
